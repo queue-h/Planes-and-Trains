@@ -3,6 +3,9 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# data file is too large
+/data/aircraft-database-complete-2025-08.csv
+
 # C extensions
 *.so
 
