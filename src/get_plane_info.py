@@ -1,19 +1,18 @@
+import re
+from os import makedev
 
-import webdriver_manager.chrome
 from geopy import distance
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
 from opensky_api import OpenSkyApi
 import pandas as pd
-import requests
 from selenium import webdriver
 from selenium.webdriver import chrome
 from bs4 import BeautifulSoup
-from selenium.webdriver import common
-from webdriver_manager.drivers.chrome import ChromeDriver
+
 
 # searches nearby area to find planes within radius
-# only has information about the physical plane, not the flight route
+# gets flight info from adsb.lol
 
 # ICAO aircraft designators provided by opensky
 # https://opensky-network.org/datasets/#metadata/
@@ -48,11 +47,16 @@ class Plane:
             self.altitude = "[Altitude]"
         self.is_empty = False
 
-        self.get_html()
+        # get values from html (adsb.lol)
+        html_values = self.get_html()
+        self.year, self.company, self.model = html_values[0]
+        self.owner = html_values[1]
 
-    # def __str__(self):
-    #    return (f"{self.flight_num}\n{self.manufacturer} {self.model}\n{self.owner}\n"
-    #            f"({self.longitude}, {self.latitude})\n{self.altitude} km\n{self.category.name}\n")
+        # get values from api (adsbdb.com)
+
+    def __str__(self):
+        return (f"{self.year} {self.company} {self.model}\n{self.owner}\n"
+                f"({self.longitude}, {self.latitude})\n{self.altitude} km\n")
 
     # scrape data from https://adsb.lol/
     def get_html(self):
@@ -71,14 +75,52 @@ class Plane:
         html = driver.page_source
         soup = BeautifulSoup(html, "html.parser")
 
-        # find id
-        model = soup.find(id="selected_typelong").text
-        print(model)
+        # tuple in form of (year, make, model)
+        type_tuple = get_type(soup)
+        owner = get_owner(soup)
 
         driver.quit()
+        return type_tuple, owner
 
+def get_owner(soup):
+    # find ownder
+    owner = soup.find(id="selected_ownop").text
+    if owner is None:
+        owner = "[Owner]"
+    return owner
 
+# TODO: figure out adsbdb api
+def get_route(icao):
+    pass
 
+# given a beautiful soup object, returns a tuple in the form of (year, make, model)
+def get_type(soup):
+    # find type
+    type_str = soup.find(id="selected_typelong").text
+
+    # check for year
+    year_pattern = re.compile(r"^\d{4}")
+    if year_pattern.search(type_str) is not None:
+        year = year_pattern.search(type_str).group()
+    else:
+        year = "[Year]"
+
+    # get make
+    make_pattern = re.compile(r"[A-Z]{2,} ")
+    if make_pattern.search(type_str) is not None:
+        make = make_pattern.search(type_str).group().strip()
+    else:
+        make = "[Company]"
+
+    # get model
+    if make_pattern.search(type_str) is not None:
+        model_index = make_pattern.search(type_str).end()
+        model = type_str[model_index:]
+    else:
+        model = "[Model]"
+
+    # return type
+    return (year, make, model)
 
 # takes in an opensky_api state and uses geopy's geodesic module to determine if the
 # plane is less than five miles from "home"
@@ -115,6 +157,6 @@ def main():
             plane_obj = Plane(plane)
             plane_list.append(plane_obj)
 
-            #print(plane_obj)
+            print(plane_obj)
 
 main()
