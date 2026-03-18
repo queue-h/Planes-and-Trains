@@ -1,9 +1,16 @@
-from enum import Enum
+
+import webdriver_manager.chrome
 from geopy import distance
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
 from opensky_api import OpenSkyApi
 import pandas as pd
+import requests
+from selenium import webdriver
+from selenium.webdriver import chrome
+from bs4 import BeautifulSoup
+from selenium.webdriver import common
+from webdriver_manager.drivers.chrome import ChromeDriver
 
 # searches nearby area to find planes within radius
 # only has information about the physical plane, not the flight route
@@ -18,30 +25,10 @@ geolocator = Nominatim(user_agent="Planes+Trains")
 ADDRESS = "1415 Duckens St Odenton, MD"
 LOCATION = geolocator.geocode(ADDRESS)
 HOME_LAT, HOME_LONG = LOCATION.latitude, LOCATION.longitude
-RADIUS = 15 ## mi
+RADIUS = 10 ## mi
 
-class Categories(Enum):
-    NO_INFO = 0
-    NO_ADS_B_INFO = 1
-    LIGHT = 2
-    SMALL = 3
-    LARGE = 4
-    HIGH_VORTEX_LARGE = 5
-    HEAVY = 6
-    HIGH_PERFORMANCE = 7
-    ROTORCRAFT = 8
-    GLIDER = 9
-    LIGHTER_THAN_AIR = 10
-    PARACHUTIST = 11
-    ULTRALIGHT = 12
-    RESERVED = 13
-    UNMANNED = 14
-    TRANS_ATOSPHERIC = 15
-    SURFACE_VEHICLE_EMERGENCY = 16
-    SURFACE_VEHICLE_SERVICE = 17
-    POINT_OBSTACLE = 18
-    CLUSTER_OBSTACLE = 19
-    LINE_OBSTACLE = 20
+BASE_URL = "https://adsb.lol/"
+QUERY_ICAO = "?icao="
 
 class Plane:
 
@@ -53,7 +40,6 @@ class Plane:
         self.flight_num = plane.callsign
         self.longitude = plane.longitude
         self.latitude = plane.latitude
-        self.category = Categories(plane.category)
 
         # altitudes are often empty, handle
         if plane.geo_altitude is not None:
@@ -62,41 +48,36 @@ class Plane:
             self.altitude = "[Altitude]"
         self.is_empty = False
 
-        # take series from dataframe
-        plane_row = Plane.icao_df[Plane.icao_df["'icao24'"] == self.icao]
+        self.get_html()
 
-        if plane_row.empty:
-            self.is_empty = True
+    # def __str__(self):
+    #    return (f"{self.flight_num}\n{self.manufacturer} {self.model}\n{self.owner}\n"
+    #            f"({self.longitude}, {self.latitude})\n{self.altitude} km\n{self.category.name}\n")
 
-        if plane_row.ndim == 2 and not self.is_empty:
-            plane_row = plane_row.iloc[0]
+    # scrape data from https://adsb.lol/
+    def get_html(self):
+        URL = BASE_URL + QUERY_ICAO + self.icao
 
-        if not self.is_empty:
-            # from database
-            self.manufacturer = plane_row["'manufacturerName'"]
-            self.model = plane_row["'model'"].replace("'", "")
-            self.owner = plane_row["'owner'"]
-        else:
-            # fill empty values
-            self.manufacturer = "[Manufacturer]"
-            self.model = "[Model]"
-            self.owner = "[Owner]"
-        # handle null values --> model doesn't get turned to '' and I don't know why
-        if not self.manufacturer or self.manufacturer == "''":
-            self.manufacturer = "[Manufacturer]"
-        if not self.model:
-            self.model = "[Model]"
-        if not self.owner or self.owner == "''":
-            self.owner = "[Owner]"
+        # set up chrome browser
+        chrome_options = chrome.options.Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--disable-gpu")
 
-        # handle category exceptions because there are a lot of really common plane types without categories
-        if self.category == Categories.NO_INFO:
-            if "737" in self.model and (self.manufacturer == "Boeing" or "Boeing" in self.model):
-                self.category = Categories.LARGE
+        # create driver and get page
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.get(URL)
 
-    def __str__(self):
-        return (f"{self.flight_num}\n{self.manufacturer} {self.model}\n{self.owner}\n"
-                f"({self.longitude}, {self.latitude})\n{self.altitude} km\n{self.category.name}\n")
+        # get and parse html
+        html = driver.page_source
+        soup = BeautifulSoup(html, "html.parser")
+
+        # find id
+        model = soup.find(id="selected_typelong").text
+        print(model)
+
+        driver.quit()
+
+
 
 
 # takes in an opensky_api state and uses geopy's geodesic module to determine if the
@@ -134,6 +115,6 @@ def main():
             plane_obj = Plane(plane)
             plane_list.append(plane_obj)
 
-            print(plane_obj)
+            #print(plane_obj)
 
 main()
