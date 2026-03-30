@@ -1,17 +1,9 @@
-import re
 import requests
 from geopy import distance
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
 from opensky_api import OpenSkyApi
 import pandas as pd
-from selenium import webdriver
-from selenium.webdriver import chrome
-from bs4 import BeautifulSoup
-
-
-# searches nearby area to find planes within radius
-# gets flight info from adsb.lol
 
 # ICAO aircraft designators provided by opensky
 # https://opensky-network.org/datasets/#metadata/
@@ -23,7 +15,6 @@ geolocator = Nominatim(user_agent="Planes+Trains")
 ADDRESS = "1415 Duckens St Odenton, MD"
 LOCATION = geolocator.geocode(ADDRESS)
 HOME_LAT, HOME_LONG = LOCATION.latitude, LOCATION.longitude
-print(HOME_LAT, HOME_LONG)
 RADIUS = 10 ## mi
 
 class Plane:
@@ -42,77 +33,46 @@ class Plane:
             self.altitude = plane.geo_altitude
         else:
             self.altitude = "[ALTITUDE]"
-        self.is_empty = False
 
-        # get values from api (adsbdb.com)
-        aircraft_info = self.get_aircraft()
-        if isinstance(aircraft_info, dict):
-            self.type = aircraft_info["type"]
-            self.owner = aircraft_info["owner"]
-            self.registration = aircraft_info["registration"]
-        else:
-            print(aircraft_info)
-            self.type = "[TYPE]"
-            self.owner = "[OWNER]"
-            self.registration = "[REGISTRATION]"
+        # set up class values to be handled in call api
+        self.type = "[TYPE]"
+        self.owner = "[OWNER]"
+        self.registration = "[REGISTRATION]"
+        self.origin = "[ORIGIN]"
+        self.destination = "[DESTINATION]"
+        self.empty = False
+        self.error = "[NO ERROR]"
 
-        flight_info = self.get_flight()
-        if isinstance(flight_info, tuple):
-            self.origin, self.destination = self.get_flight()
-            self.origin_iata = self.origin["iata"]
-            self.destination_iata = self.destination["iata"]
-        else:
-            print(flight_info)
-            self.origin = "[ORIGIN]"
-            self.origin_iata = "[ORIGIN_IATA]"
-            self.destination = "[DESTINATION]"
-            self.destination_iata = "[DESTINATION_IATA]"
-
-
+        # set values from adsbdb.com
+        self.call_api()
 
     def __str__(self):
-        return (f"{self.type}\n"
+        str = (f"{self.type}\n"
                 f"{self.owner}\n"
                 f"({self.longitude}, {self.latitude})\n"
-                f"{self.altitude} km\n"
-                f"{self.origin_iata}-{self.destination_iata}\n")
-
-    # get aircraft info from adsbdb api
-    # returns dict {type, owner, registration}
-    def get_aircraft(self):
-        url = "https://api.adsbdb.com/v0/aircraft/" + self.icao
-
-        response = requests.get(url)
-        if response.status_code == 200:
-            aircraft = response.json()["response"]["aircraft"]
-
-            # find info
-            type = aircraft["type"]
-            owner = aircraft["registered_owner"]
-            registration = aircraft["registration"]
-
+                f"{self.altitude} km\n")
+        if not self.empty:
+            str += f"{self.origin["iata"]}-{self.destination["iata"]}\n"
         else:
-            return f"{response.status_code}: {response.text}"
+            str += f"{self.error}\n"
+        return str
 
-        return {"type": type, "owner": owner, "registration": registration}
-
-    # get flight information from https://adsbdb.com api
-    # returns tuple (origin, destination)
-    def get_flight(self):
-        url = "https://api.adsbdb.com/v0/callsign/" + self.flight_num
-
+    def call_api(self):
+        url = f"https://api.adsbdb.com/v0/aircraft/{self.icao}?callsign={self.flight_num}"
         response = requests.get(url)
+
         if response.status_code == 200:
-            flight = response.json()["response"]["flightroute"]
+            aircraft_info = response.json()["response"]["aircraft"]
+            self.type = aircraft_info["manufacturer"] + " " + aircraft_info["type"]
+            self.owner = aircraft_info["registered_owner"]
+            self.registration = aircraft_info["registration"]
 
-            # find origin
-            origin = self.get_airport_info(flight["origin"])
-            destination = self.get_airport_info(flight["destination"])
-
+            flight_info = response.json()["response"]["flightroute"]
+            self.origin = self.get_airport_info(flight_info["origin"])
+            self.destination = self.get_airport_info(flight_info["destination"])
         else:
-            return f"{response.status_code}: {response.text}"
-
-        return origin, destination
+            self.empty = True
+            self.error = "ERROR: " + str.upper(response.text[13:-2])
 
     # parse airport information from adsbdb.com json
     # returns dict {iata, name, country, municipality}
@@ -124,7 +84,7 @@ class Plane:
         return {"iata": iata, "name": name, "country": country, "municipality": municipality}
 
 # takes in an opensky_api state and uses geopy's geodesic module to determine if the
-# plane is less than five miles from "home"
+# plane is less than RADIUS miles from "home"
 def is_within_radius(plane):
     distance = geodesic((HOME_LAT, HOME_LONG), (plane.latitude, plane.longitude)).mi
     return distance <= RADIUS
