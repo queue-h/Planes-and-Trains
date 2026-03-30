@@ -6,6 +6,9 @@ __pycache__/
 # data file is too large
 /data/aircraft-database-complete-2025-08.csv
 
+# ignore .idea files
+/.idea/
+
 # C extensions
 *.so
 
