@@ -23,6 +23,7 @@ geolocator = Nominatim(user_agent="Planes+Trains")
 ADDRESS = "1415 Duckens St Odenton, MD"
 LOCATION = geolocator.geocode(ADDRESS)
 HOME_LAT, HOME_LONG = LOCATION.latitude, LOCATION.longitude
+print(HOME_LAT, HOME_LONG)
 RADIUS = 10 ## mi
 
 class Plane:
@@ -40,93 +41,60 @@ class Plane:
         if plane.geo_altitude is not None:
             self.altitude = plane.geo_altitude
         else:
-            self.altitude = "[Altitude]"
+            self.altitude = "[ALTITUDE]"
         self.is_empty = False
 
-        # get values from html (adsb.lol)
-        aircraft_info = self.get_aircraft()
-        self.year, self.company, self.model = aircraft_info["type_tuple"]
-        self.owner = aircraft_info["owner"]
-        self.registration = aircraft_info["registration"]
-
         # get values from api (adsbdb.com)
-        self.origin, self.destination = self.get_flight()
+        aircraft_info = self.get_aircraft()
+        if isinstance(aircraft_info, dict):
+            self.type = aircraft_info["type"]
+            self.owner = aircraft_info["owner"]
+            self.registration = aircraft_info["registration"]
+        else:
+            print(aircraft_info)
+            self.type = "[TYPE]"
+            self.owner = "[OWNER]"
+            self.registration = "[REGISTRATION]"
+
+        flight_info = self.get_flight()
+        if isinstance(flight_info, tuple):
+            self.origin, self.destination = self.get_flight()
+            self.origin_iata = self.origin["iata"]
+            self.destination_iata = self.destination["iata"]
+        else:
+            print(flight_info)
+            self.origin = "[ORIGIN]"
+            self.origin_iata = "[ORIGIN_IATA]"
+            self.destination = "[DESTINATION]"
+            self.destination_iata = "[DESTINATION_IATA]"
+
+
 
     def __str__(self):
-        return (f"{self.year} {self.company} {self.model}\n"
+        return (f"{self.type}\n"
                 f"{self.owner}\n"
                 f"({self.longitude}, {self.latitude})\n"
                 f"{self.altitude} km\n"
-                f"{self.origin["iata"]}-{self.destination["iata"]}\n")
+                f"{self.origin_iata}-{self.destination_iata}\n")
 
-    # scrape data from https://adsb.lol/
-    # only provides aircraft info
-    # returns dict {type_tuple, owner, registration}
+    # get aircraft info from adsbdb api
+    # returns dict {type, owner, registration}
     def get_aircraft(self):
-        url = "https://adsb.lol/" + "?icao=" + self.icao
+        url = "https://api.adsbdb.com/v0/aircraft/" + self.icao
 
-        chrome_options = chrome.options.Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--disable-gpu")
+        response = requests.get(url)
+        if response.status_code == 200:
+            aircraft = response.json()["response"]["aircraft"]
 
-        # create driver and get page
-        driver = webdriver.Chrome(options=chrome_options)
+            # find info
+            type = aircraft["type"]
+            owner = aircraft["registered_owner"]
+            registration = aircraft["registration"]
 
-        # get and parse html
-        driver.get(url)
-        html = driver.page_source
-        soup = BeautifulSoup(html, "html.parser")
-
-        # get info from website
-        type_tuple = self.get_type(soup)
-        owner = self.get_owner(soup)
-        registration = self.get_registration(soup)
-
-        driver.quit()
-        return {"type_tuple": type_tuple, "owner": owner, "registration": registration}
-
-    # given a beautiful soup object, returns a tuple in the form of (year, make, model)
-    def get_type(self, soup):
-        # find type
-        type_str = soup.find(id="selected_typelong").text
-
-        # check for year
-        year_pattern = re.compile(r"^\d{4}")
-        if year_pattern.search(type_str) is not None:
-            year = year_pattern.search(type_str).group()
         else:
-            year = "[Year]"
+            return f"{response.status_code}: {response.text}"
 
-        # get make
-        make_pattern = re.compile(r"[A-Z]{2,} ")
-        if make_pattern.search(type_str) is not None:
-            make = make_pattern.search(type_str).group().strip()
-        else:
-            make = "[Company]"
-
-        # get model
-        if make_pattern.search(type_str) is not None:
-            model_index = make_pattern.search(type_str).end()
-            model = type_str[model_index:]
-        else:
-            model = "[Model]"
-
-        # return type
-        return (year, make, model)
-
-    # find owner from adsb.lol
-    def get_owner(self, soup):
-        owner = soup.find(id="selected_ownop").text
-        if owner is None:
-            owner = "[Owner]"
-        return owner
-
-    # find registration num from adsb.lol
-    def get_registration(self, soup):
-        registration = soup.find(id="selected_registration").text
-        if registration is None:
-            registration = "[Registration]"
-        return registration
+        return {"type": type, "owner": owner, "registration": registration}
 
     # get flight information from https://adsbdb.com api
     # returns tuple (origin, destination)
