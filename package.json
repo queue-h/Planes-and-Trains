@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "geographiclib-dms": "^2.2.0",
+    "geographiclib-geodesic": "^2.2.0"
+  }
+}
